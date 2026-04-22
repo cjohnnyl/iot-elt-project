@@ -1,0 +1,132 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": { "list": [] },
+  "description": "Monitoramento IoT — Viveiro de Eucalipto",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "datasource": "PostgreSQL IoT",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 22 },
+              { "color": "red", "value": 30 }
+            ]
+          },
+          "unit": "celsius"
+        }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background" },
+      "title": "Temperatura Media por Estufa",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": "PostgreSQL IoT",
+          "rawSql": "SELECT estufa_id AS metric, avg_soil_temp_c AS value FROM viveiro_iot WHERE processed_at > NOW() - INTERVAL '5 minutes' ORDER BY processed_at DESC LIMIT 10;",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "datasource": "PostgreSQL IoT",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 50 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background" },
+      "title": "Umidade Media por Estufa",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": "PostgreSQL IoT",
+          "rawSql": "SELECT estufa_id AS metric, avg_humidity AS value FROM viveiro_iot WHERE processed_at > NOW() - INTERVAL '5 minutes' ORDER BY processed_at DESC LIMIT 10;",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "datasource": "PostgreSQL IoT",
+      "fieldConfig": {
+        "defaults": { "unit": "celsius" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "id": 3,
+      "options": { "tooltip": { "mode": "single" } },
+      "title": "Temperatura do Solo ao Longo do Tempo",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "PostgreSQL IoT",
+          "rawSql": "SELECT processed_at AS time, avg_soil_temp_c AS value, estufa_id AS metric FROM viveiro_iot WHERE $__timeFilter(processed_at) ORDER BY processed_at ASC;",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "datasource": "PostgreSQL IoT",
+      "fieldConfig": {
+        "defaults": { "unit": "percent" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "id": 4,
+      "options": { "tooltip": { "mode": "single" } },
+      "title": "Umidade ao Longo do Tempo",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": "PostgreSQL IoT",
+          "rawSql": "SELECT processed_at AS time, avg_humidity AS value, estufa_id AS metric FROM viveiro_iot WHERE $__timeFilter(processed_at) ORDER BY processed_at ASC;",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "datasource": "PostgreSQL IoT",
+      "fieldConfig": { "defaults": {} },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "id": 5,
+      "options": { "showHeader": true },
+      "title": "Ultimas Leituras Brutas dos Sensores",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": "PostgreSQL IoT",
+          "rawSql": "SELECT sensor_id, estufa_id, bed_id, clone_id, soil_temp_c, humidity, ts FROM sensor_readings_raw ORDER BY ts DESC LIMIT 50;",
+          "format": "table"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "tags": ["iot", "eucalipto", "viveiro"],
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "IoT Viveiro de Eucalipto",
+  "uid": "iot-viveiro-001",
+  "version": 1
+}

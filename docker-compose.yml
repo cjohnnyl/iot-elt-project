@@ -1,18 +1,39 @@
 services:
+
+  # ============================================================
+  # ZOOKEEPER — Coordenação do cluster Kafka
+  # ============================================================
   zookeeper:
     image: confluentinc/cp-zookeeper:7.2.1
     container_name: zookeeper
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "zookeeper"
 
+  # ============================================================
+  # KAFKA — Mensageria de eventos IoT
+  # ============================================================
   kafka:
     image: confluentinc/cp-kafka:7.2.1
     container_name: kafka
+    restart: unless-stopped
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"
       - "29092:29092"
@@ -25,45 +46,208 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "kafka"
 
+  # ============================================================
+  # POSTGRESQL — Persistência de leituras e alertas
+  # ============================================================
   postgres:
     image: postgres:14
     container_name: postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: iot_data
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "postgres"
 
-  spark:
-    image: apache/spark:3.5.0
-    container_name: spark
-    depends_on:
-      - kafka
-      - postgres
-    user: root
-    working_dir: /opt/spark-app
-    entrypoint: ["/bin/bash", "-c", "sleep infinity"]
-    environment:
-      SPARK_HOME: /opt/spark
-    volumes:
-      - .:/opt/spark-app
-    ports:
-      - "4040:4040"
-
+  # ============================================================
+  # PRODUCER — Simulação de sensores PT100
+  # ============================================================
   producer:
     build: ./producer
     container_name: producer
+    restart: unless-stopped
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    env_file:
+      - .env
     environment:
-      KAFKA_BROKER: kafka:9092
-      TOPIC: iot_sensors
-    restart: on-failure
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      TOPIC: ${KAFKA_TOPIC}
+      ESTUFAS: ${ESTUFAS}
+      SENSOR_INTERVAL_SECONDS: ${SENSOR_INTERVAL_SECONDS}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "producer"
 
+  # ============================================================
+  # SPARK CONSUMER — Streaming processing automático
+  # ============================================================
+  spark:
+    build: ./consumer
+    container_name: spark
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+    ports:
+      - "4040:4040"
+    volumes:
+      - spark_checkpoint:/tmp/spark-checkpoint
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+        tag: "spark"
+
+  # ============================================================
+  # API — FastAPI REST + Integração Ollama
+  # ============================================================
+  api:
+    build: ./api
+    container_name: api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      OLLAMA_HOST: ${OLLAMA_HOST}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      ALERT_TEMP_MIN: ${ALERT_TEMP_MIN}
+      ALERT_TEMP_MAX: ${ALERT_TEMP_MAX}
+      ALERT_HUMIDITY_MIN: ${ALERT_HUMIDITY_MIN}
+      ALERT_HUMIDITY_MAX: ${ALERT_HUMIDITY_MAX}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "api"
+
+  # ============================================================
+  # OLLAMA — LLM local (sem internet, zero custo)
+  # NOTA: Na primeira execução, o modelo será baixado (~2GB).
+  #       Execute antes: docker-compose run --rm ollama ollama pull llama3.2
+  # ============================================================
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "ollama"
+
+  # ============================================================
+  # GRAFANA — Dashboard de visualização
+  # Acesse: http://localhost:3000 (admin/admin)
+  # Datasource: PostgreSQL (postgres:5432, banco: iot_data)
+  # ============================================================
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_LOG_LEVEL: warn
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "grafana"
+
+# ============================================================
+# VOLUMES — Persistência de dados entre reinicializações
+# ============================================================
 volumes:
   postgres_data:
+    name: iot_postgres_data
+  spark_checkpoint:
+    name: iot_spark_checkpoint
+  ollama_data:
+    name: iot_ollama_data
+  grafana_data:
+    name: iot_grafana_data
