@@ -117,10 +117,14 @@ cp .env.example .env
 ### 3. Baixe o modelo Ollama (primeira vez — ~2GB)
 
 ```bash
-docker-compose run --rm ollama ollama pull llama3.2
+docker-compose up -d ollama
+docker-compose exec ollama ollama pull llama3.2
 ```
 
-> Este passo é necessário apenas na primeira execução. O modelo fica armazenado no volume `iot_ollama_data`.
+> **ATENCAO — Comando validado em 2026-04-22 (Ollama v0.21.1).**
+> Use `docker-compose exec` (NAO `docker-compose run`). O comando `run` cria um container temporario que nao tem o servidor Ollama em execucao, causando o erro `unknown command "ollama" for "ollama"`. O `exec` entra no container ja em execucao onde o servidor esta ativo.
+
+> Este passo e necessario apenas na primeira execucao. O modelo fica armazenado no volume `iot_ollama_data`.
 
 ### 4. Suba todos os serviços
 
@@ -364,7 +368,8 @@ docker-compose ps
 docker-compose up --scale producer=2
 
 # Baixar modelo Ollama diferente (ex: phi3)
-docker-compose run --rm ollama ollama pull phi3
+docker-compose up -d ollama
+docker-compose exec ollama ollama pull phi3
 ```
 
 ---
@@ -443,6 +448,23 @@ O pipeline segue um fluxo linear de ingestão → processamento → persistênci
 
 ## Troubleshooting
 
+### Erro: "unknown command ollama for ollama" ao fazer pull
+
+Voce usou `docker-compose run` em vez de `docker-compose exec`. O `run` cria um container novo e temporario — o servidor Ollama nao esta rodando nele. O `exec` entra no container que ja esta ativo com o servidor em execucao.
+
+**Errado:**
+```bash
+docker-compose run --rm ollama ollama pull llama3.2   # NAO faca isso
+```
+
+**Correto:**
+```bash
+docker-compose up -d ollama                          # sobe o container
+docker-compose exec ollama ollama pull llama3.2      # executa dentro dele
+```
+
+---
+
 ### Ollama ainda baixando o modelo
 Se o endpoint `/analise` retornar erro 503 ou timeout logo após o primeiro `docker-compose up`, o modelo `llama3.2` pode ainda estar sendo baixado em background. Verifique o progresso com:
 
@@ -453,7 +475,8 @@ docker logs -f ollama
 Aguarde até ver a mensagem de conclusão do pull antes de chamar `/analise`. Alternativamente, faça o pull antes de subir o stack completo:
 
 ```bash
-docker-compose run --rm ollama ollama pull llama3.2
+docker-compose up -d ollama
+docker-compose exec ollama ollama pull llama3.2
 docker-compose up --build
 ```
 
